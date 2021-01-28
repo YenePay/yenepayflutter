@@ -9,6 +9,7 @@ import android.content.IntentFilter
 import android.os.Handler
 import android.os.Looper
 import androidx.annotation.NonNull
+import androidx.lifecycle.*
 import com.yenepay.yenepayflutter.Messages.YenePayApi
 import com.yenepaySDK.PaymentOrderManager
 import com.yenepaySDK.PaymentResponse
@@ -16,23 +17,31 @@ import com.yenepaySDK.model.YenePayConfiguration
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
+import io.flutter.embedding.engine.plugins.lifecycle.FlutterLifecycleAdapter
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
-import io.flutter.plugin.common.EventChannel.StreamHandler
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.PluginRegistry
-import kotlin.collections.HashMap
 
 /** YenepayflutterPlugin */
-class YenepayflutterPlugin: FlutterPlugin, Messages.YenePayApi, ActivityAware {
+class YenepayflutterPlugin: FlutterPlugin, Messages.YenePayApi, ActivityAware, LifecycleObserver {
   /// The MethodChannel that will the communication between Flutter and native Android
   ///
   /// This local reference serves to register the plugin with the Flutter Engine and unregister it
   /// when the Flutter Engine is detached from the Activity
   private var methodChannel : MethodChannel? = null
   private lateinit var eventChannel: EventChannel
-  private var eventSender: EventChannel.EventSink? = null
+  private var eventSender = MutableLiveData<EventChannel.EventSink>()
   private var activityBinding: ActivityPluginBinding? = null
+  private val _paymentResponse = MutableLiveData<PaymentResponse>()
+  val paymentResponse: LiveData<PaymentResponse>
+    get() {
+      return Transformations.switchMap(eventSender) { event ->
+        if(event != null){
+          _paymentResponse
+        } else MutableLiveData()
+      }
+    }
   private val broadcastReceiver = object : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
       if(intent?.action == PAYMENT_BROADCAST_ACTION) {
@@ -48,10 +57,10 @@ class YenepayflutterPlugin: FlutterPlugin, Messages.YenePayApi, ActivityAware {
     flutterPluginBinding.applicationContext.registerReceiver(broadcastReceiver, IntentFilter(PAYMENT_BROADCAST_ACTION))
     val completionIntent = PendingIntent.getActivity(flutterPluginBinding.applicationContext,
             PaymentOrderManager.YENEPAY_CHECKOUT_REQ_CODE,
-            Intent(flutterPluginBinding.applicationContext, NativePaymentResponseActivity::class.java), 0)
+            getIntentToOpenMainActivity(flutterPluginBinding.applicationContext), 0)
     val cancelationIntent = PendingIntent.getActivity(flutterPluginBinding.applicationContext,
             PaymentOrderManager.YENEPAY_CHECKOUT_REQ_CODE,
-            Intent(flutterPluginBinding.applicationContext, NativePaymentResponseActivity::class.java), 0)
+            getIntentToOpenMainActivity(flutterPluginBinding.applicationContext), 0)
     YenePayConfiguration.setDefaultInstance(YenePayConfiguration.Builder(flutterPluginBinding.applicationContext)
             .setGlobalCompletionIntent(completionIntent)
             .setGlobalCancelIntent(cancelationIntent)
@@ -59,19 +68,29 @@ class YenepayflutterPlugin: FlutterPlugin, Messages.YenePayApi, ActivityAware {
   }
   private val eventHandler = object : EventChannel.StreamHandler {
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
-      eventSender = events
+      eventSender.value = events
     }
-
     override fun onCancel(arguments: Any?) {
-      eventSender = null
+      eventSender.value = null
     }
   }
-  private fun processIntent(intent: Intent?){
+
+  @OnLifecycleEvent(Lifecycle.Event.ON_START)
+  fun onActivityStart(lifecycleOwner: LifecycleOwner){
+    paymentResponse.observe(lifecycleOwner, Observer { payment ->
+      payment?.let {
+        eventSender.value?.success(it.toWritableMap())
+      }
+    })
+  }
+  private fun processIntent(intent: Intent?): Boolean{
     intent?.let {
       PaymentOrderManager.parseResponse(it)?.let { response ->
         resolvePromise(response)
+        return true
       }
     }
+    return false
   }
   private fun sendEvent(eventName: String,
                         params: HashMap<*,*>?) {
@@ -82,8 +101,7 @@ class YenepayflutterPlugin: FlutterPlugin, Messages.YenePayApi, ActivityAware {
 
   }
   private fun resolvePromise(response: PaymentResponse) {
-//    sendEvent(PAYMENT_RESPONSE_EVENT, response.toWritableMap())
-    eventSender?.success(response.toWritableMap())
+    _paymentResponse.value = response
   }
   private fun rejectPromise(message: String?) {
 //    sendEvent(PAYMENT_ERROR_EVENT,
@@ -91,7 +109,7 @@ class YenepayflutterPlugin: FlutterPlugin, Messages.YenePayApi, ActivityAware {
 //              put("code", "Payment Error")
 //              put("message",  message?: "User cancelled payment or some error occurred during payment")
 //            })
-    eventSender?.error("Payment Error", message?: "User cancelled payment or some error occurred during payment", null)
+    eventSender.value?.error("Payment Error", message?: "User cancelled payment or some error occurred during payment", null)
   }
 
   override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {
@@ -138,26 +156,50 @@ class YenepayflutterPlugin: FlutterPlugin, Messages.YenePayApi, ActivityAware {
       true
     } else false
   }
+  private val newIntentListener = PluginRegistry.NewIntentListener { intent ->
+    processIntent(intent)
+  }
   private fun tearDown(){
     tearDownChannel()
     tearDownActivity()
   }
 
   private fun tearDownActivity() {
-    activityBinding?.removeActivityResultListener(activityResultListener)
+    activityBinding?.apply {
+      removeActivityResultListener(activityResultListener)
+      removeOnNewIntentListener(newIntentListener)
+      val lifecycle: Lifecycle = FlutterLifecycleAdapter.getActivityLifecycle(this)
+      lifecycle.removeObserver(this@YenepayflutterPlugin)
+    }
     activityBinding = null
   }
 
   private fun tearDownChannel() {
     methodChannel?.setMethodCallHandler(null)
     methodChannel = null
+    eventChannel.setStreamHandler(null)
   }
 
   private fun setUpActivity(activityPluginBinding: ActivityPluginBinding) {
+    val lifecycle: Lifecycle = FlutterLifecycleAdapter.getActivityLifecycle(activityPluginBinding)
+    lifecycle.addObserver(this)
+    activityPluginBinding.apply {
+      addActivityResultListener(activityResultListener)
+      addOnNewIntentListener(newIntentListener)
+      if(activity.intent?.dataString?.contains(":/payment2return", true) == true){
+        processIntent(activity.intent)
+      }
+    }
     activityBinding = activityPluginBinding
-    activityBinding?.addActivityResultListener(activityResultListener)
+  }
+  private fun getIntentToOpenMainActivity(context: Context): Intent? {
+    val packageName: String = context.packageName
+    return context
+            .packageManager
+            .getLaunchIntentForPackage(packageName)
   }
 }
+
 
 object YenePayApiHelper {
   /** Sets up an instance of `YenePayApi` to handle messages through the `binaryMessenger`  */

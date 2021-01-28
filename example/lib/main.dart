@@ -51,7 +51,7 @@ class _MyAppState extends State<MyApp> {
         ..merchantCode = "0008"
         ..merchantOrderId = "79879987987"
         ..ipnUrl = ""
-        ..returnUrl = "com.yenepay.reactnativeexample:/payment2return"
+        ..returnUrl = "com.yenepay.flutterexample:/payment2return"
         ..items = [item];
 
       await Yenepayflutter.requestPayment(order);
