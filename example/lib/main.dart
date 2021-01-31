@@ -2,11 +2,47 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:yenepayflutter/yenepayflutter.dart';
 import 'package:yenepayflutter/messages.dart';
+import 'package:yenepayflutter_example/screens/cart.dart';
+import 'package:yenepayflutter_example/screens/select_currency.dart';
+import 'package:yenepayflutter_example/screens/setting.dart';
+import 'package:yenepayflutter_example/screens/shop.dart';
+import 'package:yenepayflutter_example/screens/payment.dart';
+import 'models.dart';
 
 void main() {
-  runApp(MyApp());
+  runApp(MultiProvider(
+    providers: [
+      FutureProvider(
+        create: (context) async {
+          var pref = await SharedPreferences.getInstance();
+          return pref;
+        },
+      ),
+      ChangeNotifierProvider(create: (context) => PaymentModel()),
+      ChangeNotifierProxyProvider<SharedPreferences, SettingModel>(
+        create: (context) {
+          var pref = Provider.of<SharedPreferences>(context, listen: false);
+          return SettingModel(pref);
+        },
+        update: (context, prefs, settings) {
+          settings.pref = prefs;
+          return settings;
+        },
+      ),
+      ChangeNotifierProxyProvider<SettingModel, ShoppingCart>(
+        create: (context) => ShoppingCart(),
+        update: (context, settings, cart) {
+          cart.settings = settings;
+          return cart;
+        },
+      )
+    ],
+    child: MyApp(),
+  ));
 }
 
 class MyApp extends StatefulWidget {
@@ -15,24 +51,23 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  String _platformVersion = 'New';
-
+  final _navKey = GlobalKey<NavigatorState>();
   @override
   void initState() {
     super.initState();
-    _initPlugin();
+    // _initPlugin();
     // initPlatformState();
   }
 
-  void _initPlugin() {
+  void _initPlugin(BuildContext context) {
     Yenepayflutter.setEventHandlers((response) {
-      setState(() {
-        _platformVersion = response.toString();
-      });
+      var payment = Provider.of<PaymentModel>(context, listen: false);
+      payment.response = response;
+      _navKey.currentState.pushNamed('/payment');
     }, (error) {
-      setState(() {
-        _platformVersion = (error as PlatformException).message;
-      });
+      var payment = Provider.of<PaymentModel>(context, listen: false);
+      payment.setException(error as PlatformException);
+      _navKey.currentState.pushNamed('/payment');
     });
   }
 
@@ -55,37 +90,39 @@ class _MyAppState extends State<MyApp> {
         ..items = [item];
 
       await Yenepayflutter.requestPayment(order);
-      platformVersion = 'Payment Submitted';
-    } on PlatformException {
-      platformVersion = 'Failed to get platform version.';
-    }
+    } on PlatformException {}
 
     // If the widget was removed from the tree while the asynchronous platform
     // message was in flight, we want to discard the reply rather than calling
     // setState to update our non-existent appearance.
     if (!mounted) return;
-
-    setState(() {
-      _platformVersion = platformVersion;
-    });
   }
 
   @override
   Widget build(BuildContext context) {
+    _initPlugin(context);
     return MaterialApp(
-        home: Scaffold(
-      appBar: AppBar(
-        title: const Text('Plugin example app'),
-      ),
-      body: Center(
-        child: Text('Result: $_platformVersion\n'),
-      ),
-      floatingActionButton: FloatingActionButton(
-          tooltip: 'Add', // used by assistive technologies
-          child: Icon(Icons.add),
-          onPressed: () {
-            requestPayment();
-          }),
-    ));
+      title: "YenePay Flutter",
+      navigatorKey: _navKey,
+      initialRoute: '/',
+      routes: {
+        '/': (context) => Shop(),
+        '/cart': (context) => Cart(),
+        '/settings': (context) => Settings(),
+        '/selectCurrency': (context) => SelectCurrency(),
+        '/payment': (context) => Payment()
+      },
+    );
   }
 }
+
+// child: MaterialApp(
+//         title: 'Provider Demo',
+//         theme: appTheme,
+//         initialRoute: '/',
+//         routes: {
+//           '/': (context) => MyLogin(),
+//           '/catalog': (context) => MyCatalog(),
+//           '/cart': (context) => MyCart(),
+//         },
+//       )

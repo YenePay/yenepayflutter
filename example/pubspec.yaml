@@ -11,6 +11,11 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  
+  provider: ^4.0.0
+  settings_ui: ^0.5.0
+  uuid: 2.2.2
+  shared_preferences: ">=0.5.12 <2.0.0"
 
   yenepayflutter:
     # When depending on this package from a real application you should use:
@@ -40,9 +45,24 @@ flutter:
   uses-material-design: true
 
   # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  assets:
+    - assets/product_2giftcart.jpeg
+    - assets/product_5giftcart.jpeg
+    - assets/product_10giftcart.jpeg
+    - assets/product_adidas.jpg
+    - assets/product_asuspc_N551JK.jpeg
+    - assets/product_LeicaT.jpeg
+    - assets/product_LeviJeans.jpg
+    - assets/product_Lumia1020.jpeg
+    - assets/product_macbook.jpeg
+    - assets/product_NikeFloralShoe.jpg
+    - assets/product_NikeShirt.jpg
+    - assets/product_NikeZoom.jpg
+    - assets/product_NikonCamera_red.jpeg
+    - assets/product_PillBeats.jpeg
+    - assets/product_Speakers.jpeg
+    - assets/product_Sunglasses.jpg
+    - assets/product_WomenTShirt.jpg
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/assets-and-images/#resolution-aware.
